@@ -51,7 +51,7 @@ jobs:
       - name: 編譯 Debug APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon -DWHISPER_CPP_DIR="$RUNNER_TEMP/whisper.cpp" assembleDebug
+          ./gradlew --no-daemon -PWHISPER_CPP_DIR="$RUNNER_TEMP/whisper.cpp" assembleDebug
 
       - name: 上傳打包好的 APK
         uses: actions/upload-artifact@v4
