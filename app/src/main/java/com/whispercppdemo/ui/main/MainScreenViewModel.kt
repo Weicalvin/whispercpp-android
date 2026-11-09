@@ -21,7 +21,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.github.liuyueyi.quick.transfer.ChineseUtils
+import com.github.houbb.opencc4j.util.ZhConverterUtil
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
@@ -127,7 +127,7 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
                 val srtBuilder = StringBuilder()
                 for (seg in segments) {
                     val translatedSimp = translator.translate(seg.text).await()
-                    val translatedTrad = ChineseUtils.s2twp(translatedSimp)
+                    val translatedTrad = ZhConverterUtil.toTraditional(translatedSimp)
 
                     srtBuilder.append("${seg.index}\n")
                     srtBuilder.append("${seg.startTime} --> ${seg.endTime}\n")
