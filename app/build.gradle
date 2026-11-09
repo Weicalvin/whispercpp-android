@@ -60,6 +60,6 @@ dependencies {
     // 1. Google ML Kit 離線翻譯
     implementation 'com.google.mlkit:translate:17.0.3'
 
-    // 2. 簡體轉台灣正體中文（含慣用詞轉換）
-    implementation 'com.github.liuyueyi:quick-chinese-transfer-core:0.2.15'
+    // 2. 官方 Maven Central 簡體轉繁體中文庫（無需 JitPack）
+    implementation 'com.github.houbb:opencc4j:1.8.1'
 }
