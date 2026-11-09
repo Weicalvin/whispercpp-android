@@ -19,17 +19,19 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: 設定官方 Gradle 環境（解決缺少 wrapper 問題）
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2'
+
       - name: 清除舊模型並下載 ggml-small-q5_1.bin (190MB)
         run: |
           rm -rf app/src/main/assets/models/*
           mkdir -p app/src/main/assets/models
           curl -L https://huggingface.co -o app/src/main/assets/models/ggml-small-q5_1.bin
 
-      - name: 賦予 gradlew 執行權限
-        run: chmod +x gradlew
-
-      - name: 編譯 Debug APK
-        run: ./gradlew assembleDebug
+      - name: 使用系統 Gradle 編譯 Debug APK
+        run: gradle assembleDebug
 
       - name: 上傳打包好的 APK
         uses: actions/upload-artifact@v4
