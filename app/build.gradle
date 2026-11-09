@@ -57,12 +57,9 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.2'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.2'
 
-    // 1. 輕量版 FFmpeg 抽音軌
-    implementation 'com.arthenica:ffmpeg-kit-audio:6.0-2'
-
-    // 2. Google ML Kit 離線翻譯
+    // 1. Google ML Kit 離線翻譯
     implementation 'com.google.mlkit:translate:17.0.3'
 
-    // 3. 簡體轉台灣正體中文（含慣用詞轉換）
+    // 2. 簡體轉台灣正體中文（含慣用詞轉換）
     implementation 'com.github.liuyueyi:quick-chinese-transfer-core:0.2.15'
 }
