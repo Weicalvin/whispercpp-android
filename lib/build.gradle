@@ -20,6 +20,9 @@ android {
             cmake {
                 // When set, builds whisper.android against the version located
                 // at GGML_HOME instead of the copy bundled with whisper.cpp.
+                if (project.hasProperty('WHISPER_CPP_DIR')) {
+                    arguments "-DWHISPER_CPP_DIR=${project.property('WHISPER_CPP_DIR')}"
+                }
                 if (
                     project.hasProperty('GGML_HOME') &&
                     project.findProperty('GGML_CLBLAST') == 'ON'

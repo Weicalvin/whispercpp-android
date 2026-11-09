@@ -19,19 +19,41 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: 設定 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安裝 Android 建置元件
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;25.2.9519653" \
+            "cmake;3.22.1"
+
       - name: 設定官方 Gradle 環境（解決缺少 wrapper 問題）
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.2'
 
-      - name: 清除舊模型並下載 ggml-small-q5_1.bin (190MB)
+      - name: 取得相容的 whisper.cpp 原始碼
+        run: |
+          git clone --filter=blob:none https://github.com/ggml-org/whisper.cpp.git "$RUNNER_TEMP/whisper.cpp"
+          git -C "$RUNNER_TEMP/whisper.cpp" checkout e30c6799283225e1dcf574924b79cb49ebc2a209
+
+      - name: 下載 ggml-small-q5_1.bin 模型
         run: |
           rm -rf app/src/main/assets/models/*
           mkdir -p app/src/main/assets/models
-          curl -L https://huggingface.co -o app/src/main/assets/models/ggml-small-q5_1.bin
+          curl --fail --location --retry 3 --retry-delay 5 \
+            'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin?download=true' \
+            --output app/src/main/assets/models/ggml-small-q5_1.bin
+          test "$(stat -c '%s' app/src/main/assets/models/ggml-small-q5_1.bin)" -gt 100000000
 
-      - name: 使用系統 Gradle 編譯 Debug APK
-        run: gradle assembleDebug
+      - name: 編譯 Debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -DWHISPER_CPP_DIR="$RUNNER_TEMP/whisper.cpp" assembleDebug
 
       - name: 上傳打包好的 APK
         uses: actions/upload-artifact@v4

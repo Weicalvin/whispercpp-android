@@ -32,5 +32,4 @@ google-services.json
 # Large model files
 app/src/main/assets/models/*.bin
 
-# Gradle wrapper jar (optional)
-gradle/wrapper/gradle-wrapper.jar
+# Gradle wrapper jar is required by ./gradlew

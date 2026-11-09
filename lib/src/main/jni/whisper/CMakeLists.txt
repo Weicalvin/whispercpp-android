@@ -3,7 +3,10 @@ cmake_minimum_required(VERSION 3.10)
 project(whisper.cpp)
 
 set(CMAKE_CXX_STANDARD 11)
-set(WHISPER_CPP_DIR "/Users/michael/Code/whisper.cpp" CACHE PATH "Path to whisper.cpp project")
+set(WHISPER_CPP_DIR "" CACHE PATH "Path to whisper.cpp project")
+if (NOT WHISPER_CPP_DIR OR NOT EXISTS "${WHISPER_CPP_DIR}/src/whisper.cpp")
+    message(FATAL_ERROR "WHISPER_CPP_DIR must point to a whisper.cpp checkout containing src/whisper.cpp")
+endif()
 
 message(STATUS "WHISPER_CPP_DIR is set to: ${WHISPER_CPP_DIR}")
 
