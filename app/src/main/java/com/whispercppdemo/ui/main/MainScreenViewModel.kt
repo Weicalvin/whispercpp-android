@@ -64,6 +64,22 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
     private var lastSrtContent by mutableStateOf("")
     private var whisperContext: WhisperContext? = null
 
+    private suspend fun setProgress(value: Float) = withContext(Dispatchers.Main) {
+        progress = value
+    }
+
+    private suspend fun setCanProcess(value: Boolean) = withContext(Dispatchers.Main) {
+        canProcess = value
+    }
+
+    private suspend fun clearDataLog() = withContext(Dispatchers.Main) {
+        dataLog = ""
+    }
+
+    private suspend fun setLastSrtContent(value: String) = withContext(Dispatchers.Main) {
+        lastSrtContent = value
+    }
+
     init {
         viewModelScope.launch {
             loadModel()
@@ -72,25 +88,25 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
 
     private suspend fun loadModel() = withContext(Dispatchers.IO) {
         try {
-            progress = 0.05f
+            setProgress(0.05f)
             printMessage("正在載入語音模型...\n")
             val models = application.assets.list("models/")
             if (!models.isNullOrEmpty()) {
-                progress = 0.15f
+                setProgress(0.15f)
                 whisperContext = WhisperContext.createContextFromAsset(
                     application.assets,
                     "models/" + models[0]
                 )
-                progress = 1f
+                setProgress(1f)
                 printMessage("模型載入完成：${models[0]}\n請選擇「純日文」或「純英文」媒體檔開始聽譯。\n\n")
-                canProcess = true
+                setCanProcess(true)
             } else {
-                progress = 1f
+                setProgress(1f)
                 printMessage("錯誤：assets/models 資料夾中找不到模型檔案。\n")
             }
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Model load failed", e)
-            progress = 1f
+            setProgress(1f)
             printMessage("模型載入失敗：${e.localizedMessage}\n")
         }
     }
@@ -116,9 +132,9 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
     fun processMedia(mediaUri: Uri, sourceLang: String) {
         if (!canProcess) return
         viewModelScope.launch(Dispatchers.IO) {
-            canProcess = false
-            progress = 0.05f
-            dataLog = ""
+            setCanProcess(false)
+            setProgress(0.05f)
+            clearDataLog()
             val langName = if (sourceLang == "ja") "純日文" else "純英文"
                 printMessage("【1/4】準備處理「$langName」媒體檔...\n")
 
@@ -126,27 +142,27 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
                 // 1. 使用 Android 原生硬體解碼抽取音軌並轉為 16kHz 單聲道 FloatArray
                 printMessage("【2/4】正在解碼媒體檔音訊並轉檔（16kHz）...\n")
                 val audioData = extractAudioTo16kMonoFloatArray(application, mediaUri)
-                progress = 0.30f
+                setProgress(0.30f)
                 if (audioData.isEmpty()) {
                     throw Exception("無法解碼音訊（可能檔案沒有音軌，或手機不支援此格式）")
                 }
 
                 // 2. Whisper 語音辨識
                 printMessage("【3/4】Whisper 正在辨識語音（媒體檔較長時請耐心等候）...\n")
-                progress = 0.40f
+                setProgress(0.40f)
                 val segments = whisperContext?.transcribeSegments(audioData, sourceLang) ?: emptyList()
-                progress = 0.65f
+                setProgress(0.65f)
 
                 if (segments.isEmpty()) {
                     printMessage("未辨識到任何語音內容。\n")
-                    canProcess = true
+                    setCanProcess(true)
                     return@launch
                 }
                 printMessage("辨識完成，共 ${segments.size} 句！\n")
 
                 // 3. ML Kit 離線翻譯 + 轉換為繁體中文
                 printMessage("【4/4】正在檢查離線翻譯包並翻譯成繁體中文...\n")
-                progress = 0.70f
+                setProgress(0.70f)
                 val mlSourceLang = if (sourceLang == "ja") TranslateLanguage.JAPANESE else TranslateLanguage.ENGLISH
                 val options = TranslatorOptions.Builder()
                     .setSourceLanguage(mlSourceLang)
@@ -156,13 +172,13 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
 
                 val conditions = DownloadConditions.Builder().build()
                 translator.downloadModelIfNeeded(conditions).await()
-                progress = 0.80f
+                setProgress(0.80f)
 
                 val srtBuilder = StringBuilder()
                 for ((index, seg) in segments.withIndex()) {
                     val translatedSimp = translator.translate(seg.text).await()
                     val translatedTrad = ZhConverterUtil.toTraditional(translatedSimp)
-                    progress = 0.80f + 0.15f * (index + 1) / segments.size
+                    setProgress(0.80f + 0.15f * (index + 1) / segments.size)
 
                     srtBuilder.append("${seg.index}\n")
                     srtBuilder.append("${seg.startTime} --> ${seg.endTime}\n")
@@ -171,21 +187,21 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
                 translator.close()
 
                 val finalSrt = srtBuilder.toString()
-                lastSrtContent = finalSrt
+                setLastSrtContent(finalSrt)
 
                 // 4. 儲存 .srt 到手機 Download 資料夾
-                progress = 0.98f
+                setProgress(0.98f)
                 val savedFileName = saveSrtToDownloads(finalSrt, sourceLang)
                 addHistory(mediaUri, sourceLang, savedFileName)
-                progress = 1f
+                setProgress(1f)
                 printMessage("\n✅ 全部完成！字幕檔已儲存至手機「下載 (Download)」資料夾：\n檔名：$savedFileName\n\n--- 字幕預覽 ---\n$finalSrt")
 
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "Process failed", e)
                 printMessage("\n❌ 發生錯誤：${e.localizedMessage}\n")
             } finally {
-                if (progress < 1f) progress = 1f
-                canProcess = true
+                setProgress(1f)
+                setCanProcess(true)
             }
         }
     }
@@ -211,16 +227,18 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
         }.getOrDefault(emptyList())
     }
 
-    private fun addHistory(uri: Uri, sourceLang: String, outputFile: String) {
+    private suspend fun addHistory(uri: Uri, sourceLang: String, outputFile: String) {
         val item = HistoryItem(
             mediaName = getMediaDisplayName(uri),
             language = if (sourceLang == "ja") "日文" else "英文",
             completedAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
             outputFile = outputFile
         )
-        history = (listOf(item) + history).take(20)
+        val updatedHistory = withContext(Dispatchers.Main) {
+            (listOf(item) + history).take(20).also { history = it }
+        }
         val json = JSONArray()
-        history.forEach { entry ->
+        updatedHistory.forEach { entry ->
             json.put(
                 JSONObject().apply {
                     put("mediaName", entry.mediaName)
