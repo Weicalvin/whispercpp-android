@@ -17,9 +17,11 @@ fun MainScreen(viewModel: MainScreenViewModel) {
     MainScreenContent(
         canProcess = viewModel.canProcess,
         progress = viewModel.progress,
+        history = viewModel.history,
         messageLog = viewModel.dataLog,
         onMediaSelected = { uri, lang -> viewModel.processMedia(uri, lang) },
-        copyToClipboard = viewModel.copyToClipboard
+        copyToClipboard = viewModel.copyToClipboard,
+        clearHistory = viewModel.clearHistory
     )
 }
 
@@ -28,9 +30,11 @@ fun MainScreen(viewModel: MainScreenViewModel) {
 private fun MainScreenContent(
     canProcess: Boolean,
     progress: Float,
+    history: List<HistoryItem>,
     messageLog: String,
     onMediaSelected: (Uri, String) -> Unit,
     copyToClipboard: () -> Unit,
+    clearHistory: () -> Unit,
 ) {
     var selectedLang by remember { mutableStateOf("ja") }
 
@@ -106,6 +110,34 @@ private fun MainScreenContent(
                 onClick = copyToClipboard
             ) {
                 Text("複製字幕內容到剪貼簿")
+            }
+
+            if (history.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("辨識歷史", style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = clearHistory) {
+                        Text("清除")
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 160.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    history.forEach { item ->
+                        Text(
+                            text = "${item.mediaName}\n${item.language} · ${item.completedAt}\n輸出：${item.outputFile}",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Divider()
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))

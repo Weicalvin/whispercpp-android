@@ -37,8 +37,19 @@ import java.nio.ByteOrder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import org.json.JSONArray
+import org.json.JSONObject
 
 private const val LOG_TAG = "MainScreenViewModel"
+private const val HISTORY_PREFS = "transcription_history"
+private const val HISTORY_KEY = "items"
+
+data class HistoryItem(
+    val mediaName: String,
+    val language: String,
+    val completedAt: String,
+    val outputFile: String
+)
 
 class MainScreenViewModel(private val application: Application) : ViewModel() {
     var canProcess by mutableStateOf(false)
@@ -46,6 +57,8 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
     var dataLog by mutableStateOf("")
         private set
     var progress by mutableStateOf(0f)
+        private set
+    var history by mutableStateOf(loadHistory())
         private set
 
     private var lastSrtContent by mutableStateOf("")
@@ -90,6 +103,14 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
         val clipboard = application.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText("srt_subtitles", lastSrtContent)
         clipboard.setPrimaryClip(clip)
+    }
+
+    val clearHistory = {
+        history = emptyList()
+        application.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove(HISTORY_KEY)
+            .apply()
     }
 
     fun processMedia(mediaUri: Uri, sourceLang: String) {
@@ -155,6 +176,7 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
                 // 4. 儲存 .srt 到手機 Download 資料夾
                 progress = 0.98f
                 val savedFileName = saveSrtToDownloads(finalSrt, sourceLang)
+                addHistory(mediaUri, sourceLang, savedFileName)
                 progress = 1f
                 printMessage("\n✅ 全部完成！字幕檔已儲存至手機「下載 (Download)」資料夾：\n檔名：$savedFileName\n\n--- 字幕預覽 ---\n$finalSrt")
 
@@ -166,6 +188,68 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
                 canProcess = true
             }
         }
+    }
+
+    private fun loadHistory(): List<HistoryItem> {
+        val raw = application.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+            .getString(HISTORY_KEY, "[]") ?: "[]"
+        return runCatching {
+            val json = JSONArray(raw)
+            buildList {
+                for (index in 0 until json.length()) {
+                    val item = json.getJSONObject(index)
+                    add(
+                        HistoryItem(
+                            mediaName = item.optString("mediaName"),
+                            language = item.optString("language"),
+                            completedAt = item.optString("completedAt"),
+                            outputFile = item.optString("outputFile")
+                        )
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun addHistory(uri: Uri, sourceLang: String, outputFile: String) {
+        val item = HistoryItem(
+            mediaName = getMediaDisplayName(uri),
+            language = if (sourceLang == "ja") "日文" else "英文",
+            completedAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
+            outputFile = outputFile
+        )
+        history = (listOf(item) + history).take(20)
+        val json = JSONArray()
+        history.forEach { entry ->
+            json.put(
+                JSONObject().apply {
+                    put("mediaName", entry.mediaName)
+                    put("language", entry.language)
+                    put("completedAt", entry.completedAt)
+                    put("outputFile", entry.outputFile)
+                }
+            )
+        }
+        application.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(HISTORY_KEY, json.toString())
+            .apply()
+    }
+
+    private fun getMediaDisplayName(uri: Uri): String {
+        application.contentResolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (index >= 0) return cursor.getString(index)
+            }
+        }
+        return uri.lastPathSegment ?: "未命名媒體檔"
     }
 
     // Android 原生硬體音軌解碼與 16kHz 單聲道重採樣
