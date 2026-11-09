@@ -1,4 +1,4 @@
-package com.whispercppdemo.ui.main
+Cede package com.whispercppdemo.ui.main
 
 import android.app.Application
 import android.content.ClipData
@@ -62,9 +62,9 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
             if (!models.isNullOrEmpty()) {
                 whisperContext = WhisperContext.createContextFromAsset(
                     application.assets,
-                    "models/" + models
+                    "models/" + models[0]
                 )
-                printMessage("模型載入完成：${models}\n請選擇「純日文」或「純英文」影片開始聽譯。\n\n")
+                printMessage("模型載入完成：${models[0]}\n請選擇「純日文」或「純英文」影片開始聽譯。\n\n")
                 canProcess = true
             } else {
                 printMessage("錯誤：assets/models 資料夾中找不到模型檔案。\n")
@@ -249,3 +249,42 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
             val srcIdx = (i * ratio).toInt().coerceIn(0, rawSamples.size - 1)
             resampled[i] = rawSamples[srcIdx]
         }
+return resampled
+}
+private fun saveSrtToDownloads(content: String, lang: String): String {
+val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+val fileName = "Whisper_${lang}_$timestamp.srt"
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+val values = ContentValues().apply {
+put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+put(MediaStore.Downloads.MIME_TYPE, "application/x-subrip")
+put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+}
+val uri = application.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+uri?.let {
+application.contentResolver.openOutputStream(it)?.use { out ->
+out.write(content.toByteArray(Charsets.UTF_8))
+}
+}
+} else {
+val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+val file = File(downloadsDir, fileName)
+file.writeText(content, Charsets.UTF_8)
+}
+return fileName
+}
+override fun onCleared() {
+runBlocking {
+whisperContext?.release()
+whisperContext = null
+}
+}
+companion object {
+fun factory() = viewModelFactory {
+initializer {
+val application = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as Application
+MainScreenViewModel(application)
+}
+}
+}
+}
