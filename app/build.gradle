@@ -14,6 +14,10 @@ android {
         versionCode 1
         versionName "1.0"
 
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary true
@@ -23,7 +27,7 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.debug
-            minifyEnabled true
+            minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
@@ -40,8 +44,6 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion '1.5.0'
     }
-
-
 }
 
 dependencies {
@@ -52,13 +54,15 @@ dependencies {
     implementation "androidx.compose.ui:ui:1.5.0"
     implementation "androidx.compose.ui:ui-tooling-preview:1.5.0"
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1'
-    implementation "com.google.accompanist:accompanist-permissions:0.28.0"
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.2'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.2'
 
-    testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
-    androidTestImplementation "androidx.compose.ui:ui-test-junit4:1.5.0"
-    debugImplementation "androidx.compose.ui:ui-tooling:1.5.0"
-    debugImplementation "androidx.compose.ui:ui-test-manifest:1.5.0"
+    // 1. 輕量版 FFmpeg 抽音軌
+    implementation 'com.arthenica:ffmpeg-kit-audio:6.0-2'
+
+    // 2. Google ML Kit 離線翻譯
+    implementation 'com.google.mlkit:translate:17.0.3'
+
+    // 3. 簡體轉台灣正體中文（含慣用詞轉換）
+    implementation 'com.github.liuyueyi:quick-chinese-transfer-core:0.2.15'
 }
