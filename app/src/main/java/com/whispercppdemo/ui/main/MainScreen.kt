@@ -16,8 +16,9 @@ import androidx.compose.ui.unit.dp
 fun MainScreen(viewModel: MainScreenViewModel) {
     MainScreenContent(
         canProcess = viewModel.canProcess,
+        progress = viewModel.progress,
         messageLog = viewModel.dataLog,
-        onVideoSelected = { uri, lang -> viewModel.processVideo(uri, lang) },
+        onMediaSelected = { uri, lang -> viewModel.processMedia(uri, lang) },
         copyToClipboard = viewModel.copyToClipboard
     )
 }
@@ -26,24 +27,25 @@ fun MainScreen(viewModel: MainScreenViewModel) {
 @Composable
 private fun MainScreenContent(
     canProcess: Boolean,
+    progress: Float,
     messageLog: String,
-    onVideoSelected: (Uri, String) -> Unit,
+    onMediaSelected: (Uri, String) -> Unit,
     copyToClipboard: () -> Unit,
 ) {
     var selectedLang by remember { mutableStateOf("ja") }
 
-    val videoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+    val mediaPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            onVideoSelected(uri, selectedLang)
+            onMediaSelected(uri, selectedLang)
         }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("離線影片聽譯繁中 (Whisper)") }
+                title = { Text("離線媒體聽譯繁中 (Whisper)") }
             )
         },
     ) { innerPadding ->
@@ -62,10 +64,10 @@ private fun MainScreenContent(
                     enabled = canProcess,
                     onClick = {
                         selectedLang = "ja"
-                        videoPickerLauncher.launch("video/*")
+                        mediaPickerLauncher.launch(arrayOf("video/*", "audio/*"))
                     }
                 ) {
-                    Text("選擇純日文影片")
+                    Text("選擇純日文媒體檔")
                 }
 
                 Button(
@@ -73,14 +75,31 @@ private fun MainScreenContent(
                     enabled = canProcess,
                     onClick = {
                         selectedLang = "en"
-                        videoPickerLauncher.launch("video/*")
+                        mediaPickerLauncher.launch(arrayOf("video/*", "audio/*"))
                     }
                 ) {
-                    Text("選擇純英文影片")
+                    Text("選擇純英文媒體檔")
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "支援影片與音訊檔，例如 MP4、MOV、MP3、M4A、WAV（依手機解碼器支援情況而定）",
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            if (!canProcess) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = progress.coerceIn(0f, 1f),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "處理進度：${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
 
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
