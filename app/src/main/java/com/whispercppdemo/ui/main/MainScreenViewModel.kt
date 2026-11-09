@@ -43,15 +43,27 @@ import org.json.JSONObject
 private const val LOG_TAG = "MainScreenViewModel"
 private const val HISTORY_PREFS = "transcription_history"
 private const val HISTORY_KEY = "items"
+private const val MODEL_PREFS = "whisper_model"
+private const val MODEL_KEY = "selected_model"
 
 data class HistoryItem(
     val mediaName: String,
     val language: String,
+    val model: String,
     val completedAt: String,
-    val outputFile: String
+    val outputFile: String,
 )
 
 class MainScreenViewModel(private val application: Application) : ViewModel() {
+    data class ModelOption(val label: String, val assetName: String)
+
+    val modelOptions = listOf(
+        ModelOption("Whisper Tiny · 速度優先", "ggml-tiny.bin"),
+        ModelOption("Whisper Base · 品質優先", "ggml-base.bin"),
+    )
+
+    var selectedModel by mutableStateOf(loadSelectedModel())
+        private set
     var canProcess by mutableStateOf(false)
         private set
     var dataLog by mutableStateOf("")
@@ -64,61 +76,54 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
     private var lastSrtContent by mutableStateOf("")
     private var whisperContext: WhisperContext? = null
 
-    private suspend fun setProgress(value: Float) = withContext(Dispatchers.Main) {
-        progress = value
-    }
-
-    private suspend fun setCanProcess(value: Boolean) = withContext(Dispatchers.Main) {
-        canProcess = value
-    }
-
-    private suspend fun clearDataLog() = withContext(Dispatchers.Main) {
-        dataLog = ""
-    }
-
-    private suspend fun setLastSrtContent(value: String) = withContext(Dispatchers.Main) {
-        lastSrtContent = value
-    }
-
     init {
-        viewModelScope.launch {
-            loadModel()
-        }
+        viewModelScope.launch { loadModel() }
     }
+
+    fun selectModel(assetName: String) {
+        if (assetName == selectedModel || modelOptions.none { it.assetName == assetName }) return
+        selectedModel = assetName
+        application.getSharedPreferences(MODEL_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(MODEL_KEY, assetName)
+            .apply()
+        viewModelScope.launch { loadModel() }
+    }
+
+    private suspend fun setProgress(value: Float) = withContext(Dispatchers.Main) { progress = value }
+    private suspend fun setCanProcess(value: Boolean) = withContext(Dispatchers.Main) { canProcess = value }
+    private suspend fun clearDataLog() = withContext(Dispatchers.Main) { dataLog = "" }
+    private suspend fun setLastSrtContent(value: String) = withContext(Dispatchers.Main) { lastSrtContent = value }
+    private suspend fun printMessage(message: String) = withContext(Dispatchers.Main) { dataLog += message }
 
     private suspend fun loadModel() = withContext(Dispatchers.IO) {
+        setCanProcess(false)
         try {
             setProgress(0.05f)
-            printMessage("正在載入語音模型...\n")
-            val models = application.assets.list("models/")
-            if (!models.isNullOrEmpty()) {
-                setProgress(0.15f)
-                whisperContext = WhisperContext.createContextFromAsset(
-                    application.assets,
-                    "models/" + models[0]
-                )
+            printMessage("正在載入本地模型：$selectedModel\n")
+            whisperContext?.release()
+            whisperContext = null
+            val assets = application.assets.list("models/")?.toSet().orEmpty()
+            if (selectedModel !in assets) {
                 setProgress(1f)
-                printMessage("模型載入完成：${models[0]}\n請選擇「純日文」或「純英文」媒體檔開始聽譯。\n\n")
-                setCanProcess(true)
-            } else {
-                setProgress(1f)
-                printMessage("錯誤：assets/models 資料夾中找不到模型檔案。\n")
+                printMessage("找不到 $selectedModel。請使用 GitHub Actions 產出的 APK，或將模型放入 app/src/main/assets/models。\n")
+                return@withContext
             }
-        } catch (e: Exception) {
-            Log.e(LOG_TAG, "Model load failed", e)
+            setProgress(0.2f)
+            whisperContext = WhisperContext.createContextFromAsset(application.assets, "models/$selectedModel")
             setProgress(1f)
-            printMessage("模型載入失敗：${e.localizedMessage}\n")
+            printMessage("模型載入完成：$selectedModel\n請選擇來源語言並挑選媒體檔。\n\n")
+            setCanProcess(true)
+        } catch (error: Exception) {
+            Log.e(LOG_TAG, "Model load failed", error)
+            setProgress(1f)
+            printMessage("模型載入失敗：${error.localizedMessage}\n")
         }
-    }
-
-    private suspend fun printMessage(msg: String) = withContext(Dispatchers.Main) {
-        dataLog += msg
     }
 
     val copyToClipboard = {
         val clipboard = application.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("srt_subtitles", lastSrtContent)
-        clipboard.setPrimaryClip(clip)
+        clipboard.setPrimaryClip(ClipData.newPlainText("srt_subtitles", lastSrtContent))
     }
 
     val clearHistory = {
@@ -131,74 +136,56 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
 
     fun processMedia(mediaUri: Uri, sourceLang: String) {
         if (!canProcess) return
+        val modelAtStart = selectedModel
         viewModelScope.launch(Dispatchers.IO) {
             setCanProcess(false)
             setProgress(0.05f)
             clearDataLog()
-            val langName = if (sourceLang == "ja") "純日文" else "純英文"
-                printMessage("【1/4】準備處理「$langName」媒體檔...\n")
-
+            val languageName = if (sourceLang == "ja") "日文" else "英文"
+            printMessage("【1/4】使用 $modelAtStart 準備處理「$languageName」媒體檔…\n")
             try {
-                // 1. 使用 Android 原生硬體解碼抽取音軌並轉為 16kHz 單聲道 FloatArray
-                printMessage("【2/4】正在解碼媒體檔音訊並轉檔（16kHz）...\n")
+                printMessage("【2/4】正在解碼並重採樣為 16kHz 單聲道…\n")
                 val audioData = extractAudioTo16kMonoFloatArray(application, mediaUri)
-                setProgress(0.30f)
-                if (audioData.isEmpty()) {
-                    throw Exception("無法解碼音訊（可能檔案沒有音軌，或手機不支援此格式）")
-                }
+                setProgress(0.3f)
+                if (audioData.isEmpty()) throw Exception("無法解碼音訊，可能沒有音軌或手機不支援此格式")
 
-                // 2. Whisper 語音辨識
-                printMessage("【3/4】Whisper 正在辨識語音（媒體檔較長時請耐心等候）...\n")
-                setProgress(0.40f)
-                val segments = whisperContext?.transcribeSegments(audioData, sourceLang) ?: emptyList()
+                printMessage("【3/4】Whisper $modelAtStart 正在辨識語音…\n")
+                setProgress(0.4f)
+                val segments = whisperContext?.transcribeSegments(audioData, sourceLang).orEmpty()
                 setProgress(0.65f)
-
                 if (segments.isEmpty()) {
-                    printMessage("未辨識到任何語音內容。\n")
-                    setCanProcess(true)
+                    printMessage("未辨識到語音內容。\n")
                     return@launch
                 }
-                printMessage("辨識完成，共 ${segments.size} 句！\n")
+                printMessage("辨識完成，共 ${segments.size} 段；正在轉換為臺灣繁體中文…\n")
 
-                // 3. ML Kit 離線翻譯 + 轉換為繁體中文
-                printMessage("【4/4】正在檢查離線翻譯包並翻譯成繁體中文...\n")
-                setProgress(0.70f)
-                val mlSourceLang = if (sourceLang == "ja") TranslateLanguage.JAPANESE else TranslateLanguage.ENGLISH
-                val options = TranslatorOptions.Builder()
-                    .setSourceLanguage(mlSourceLang)
-                    .setTargetLanguage(TranslateLanguage.CHINESE)
-                    .build()
-                val translator = Translation.getClient(options)
-
-                val conditions = DownloadConditions.Builder().build()
-                translator.downloadModelIfNeeded(conditions).await()
-                setProgress(0.80f)
-
+                val sourceLanguage = if (sourceLang == "ja") TranslateLanguage.JAPANESE else TranslateLanguage.ENGLISH
+                val translator = Translation.getClient(
+                    TranslatorOptions.Builder()
+                        .setSourceLanguage(sourceLanguage)
+                        .setTargetLanguage(TranslateLanguage.CHINESE)
+                        .build(),
+                )
+                translator.downloadModelIfNeeded(DownloadConditions.Builder().build()).await()
+                setProgress(0.75f)
                 val srtBuilder = StringBuilder()
-                for ((index, seg) in segments.withIndex()) {
-                    val translatedSimp = translator.translate(seg.text).await()
-                    val translatedTrad = ZhConverterUtil.toTraditional(translatedSimp)
-                    setProgress(0.80f + 0.15f * (index + 1) / segments.size)
-
-                    srtBuilder.append("${seg.index}\n")
-                    srtBuilder.append("${seg.startTime} --> ${seg.endTime}\n")
-                    srtBuilder.append("$translatedTrad\n\n")
+                for ((index, segment) in segments.withIndex()) {
+                    val simplified = translator.translate(segment.text).await()
+                    val traditional = ZhConverterUtil.toTraditional(simplified)
+                    srtBuilder.append("${index + 1}\n${segment.startTime} --> ${segment.endTime}\n$traditional\n\n")
+                    setProgress(0.75f + 0.18f * (index + 1) / segments.size)
                 }
                 translator.close()
 
                 val finalSrt = srtBuilder.toString()
                 setLastSrtContent(finalSrt)
-
-                // 4. 儲存 .srt 到手機 Download 資料夾
-                setProgress(0.98f)
-                val savedFileName = saveSrtToDownloads(finalSrt, sourceLang)
-                addHistory(mediaUri, sourceLang, savedFileName)
+                val outputFile = saveSrtToDownloads(finalSrt, sourceLang, modelAtStart)
+                addHistory(mediaUri, sourceLang, modelAtStart, outputFile)
                 setProgress(1f)
-                printMessage("\n✅ 全部完成！字幕檔已儲存至手機「下載 (Download)」資料夾：\n檔名：$savedFileName\n\n--- 字幕預覽 ---\n$finalSrt")
-
-            } catch (e: Exception) {
-                Log.e(LOG_TAG, "Process failed", e)
-                printMessage("\n❌ 發生錯誤：${e.localizedMessage}\n")
+                printMessage("\n✅ 完成！已將 UTF-8 SRT 保存至 Download：$outputFile\n\n--- 字幕預覽 ---\n$finalSrt")
+            } catch (error: Exception) {
+                Log.e(LOG_TAG, "Process failed", error)
+                printMessage("\n❌ 發生錯誤：${error.localizedMessage}\n")
             } finally {
                 setProgress(1f)
                 setCanProcess(true)
@@ -206,9 +193,13 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
         }
     }
 
+    private fun loadSelectedModel(): String {
+        val saved = application.getSharedPreferences(MODEL_PREFS, Context.MODE_PRIVATE).getString(MODEL_KEY, null)
+        return saved ?: "ggml-tiny.bin"
+    }
+
     private fun loadHistory(): List<HistoryItem> {
-        val raw = application.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
-            .getString(HISTORY_KEY, "[]") ?: "[]"
+        val raw = application.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE).getString(HISTORY_KEY, "[]") ?: "[]"
         return runCatching {
             val json = JSONArray(raw)
             buildList {
@@ -218,50 +209,40 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
                         HistoryItem(
                             mediaName = item.optString("mediaName"),
                             language = item.optString("language"),
+                            model = item.optString("model", "Whisper"),
                             completedAt = item.optString("completedAt"),
-                            outputFile = item.optString("outputFile")
-                        )
+                            outputFile = item.optString("outputFile"),
+                        ),
                     )
                 }
             }
         }.getOrDefault(emptyList())
     }
 
-    private suspend fun addHistory(uri: Uri, sourceLang: String, outputFile: String) {
+    private suspend fun addHistory(uri: Uri, sourceLang: String, model: String, outputFile: String) {
         val item = HistoryItem(
             mediaName = getMediaDisplayName(uri),
             language = if (sourceLang == "ja") "日文" else "英文",
+            model = model.removePrefix("ggml-").removeSuffix(".bin").replaceFirstChar { it.uppercase() },
             completedAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
-            outputFile = outputFile
+            outputFile = outputFile,
         )
-        val updatedHistory = withContext(Dispatchers.Main) {
-            (listOf(item) + history).take(20).also { history = it }
-        }
+        val updated = withContext(Dispatchers.Main) { (listOf(item) + history).take(20).also { history = it } }
         val json = JSONArray()
-        updatedHistory.forEach { entry ->
-            json.put(
-                JSONObject().apply {
-                    put("mediaName", entry.mediaName)
-                    put("language", entry.language)
-                    put("completedAt", entry.completedAt)
-                    put("outputFile", entry.outputFile)
-                }
-            )
+        updated.forEach { entry ->
+            json.put(JSONObject().apply {
+                put("mediaName", entry.mediaName)
+                put("language", entry.language)
+                put("model", entry.model)
+                put("completedAt", entry.completedAt)
+                put("outputFile", entry.outputFile)
+            })
         }
-        application.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(HISTORY_KEY, json.toString())
-            .apply()
+        application.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE).edit().putString(HISTORY_KEY, json.toString()).apply()
     }
 
     private fun getMediaDisplayName(uri: Uri): String {
-        application.contentResolver.query(
-            uri,
-            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
-            null,
-            null,
-            null
-        )?.use { cursor ->
+        application.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                 if (index >= 0) return cursor.getString(index)
@@ -270,18 +251,15 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
         return uri.lastPathSegment ?: "未命名媒體檔"
     }
 
-    // Android 原生硬體音軌解碼與 16kHz 單聲道重採樣
     private fun extractAudioTo16kMonoFloatArray(context: Context, uri: Uri): FloatArray {
         val extractor = MediaExtractor()
         extractor.setDataSource(context, uri, null)
-
         var audioTrackIndex = -1
         var inputFormat: MediaFormat? = null
-        for (i in 0 until extractor.trackCount) {
-            val format = extractor.getTrackFormat(i)
-            val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-            if (mime.startsWith("audio/")) {
-                audioTrackIndex = i
+        for (index in 0 until extractor.trackCount) {
+            val format = extractor.getTrackFormat(index)
+            if ((format.getString(MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) {
+                audioTrackIndex = index
                 inputFormat = format
                 break
             }
@@ -290,120 +268,106 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
             extractor.release()
             return FloatArray(0)
         }
-
         extractor.selectTrack(audioTrackIndex)
-        val mime = inputFormat.getString(MediaFormat.KEY_MIME)!!
-        val codec = MediaCodec.createDecoderByType(mime)
+        val codec = MediaCodec.createDecoderByType(inputFormat.getString(MediaFormat.KEY_MIME)!!)
         codec.configure(inputFormat, null, null, 0)
         codec.start()
-
         val rawSamples = ArrayList<Float>()
         val bufferInfo = MediaCodec.BufferInfo()
-        var isEOS = false
+        var inputEnded = false
         var sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
         var channelCount = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-
-        while (true) {
-            if (!isEOS) {
-                val inIndex = codec.dequeueInputBuffer(10000)
-                if (inIndex >= 0) {
-                    val buffer = codec.getInputBuffer(inIndex)!!
-                    val sampleSize = extractor.readSampleData(buffer, 0)
-                    if (sampleSize < 0) {
-                        codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                        isEOS = true
-                    } else {
-                        codec.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
-                        extractor.advance()
-                    }
-                }
-            }
-
-            val outIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
-            if (outIndex >= 0) {
-                val outBuffer = codec.getOutputBuffer(outIndex)!!
-                if (bufferInfo.size > 0) {
-                    outBuffer.position(bufferInfo.offset)
-                    outBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                    val shortBuffer = outBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                    val shortArray = ShortArray(shortBuffer.remaining())
-                    shortBuffer.get(shortArray)
-
-                    // 混合多聲道為單聲道並轉為 [-1.0, 1.0] Float
-                    var i = 0
-                    while (i < shortArray.size) {
-                        var sum = 0f
-                        for (c in 0 until channelCount) {
-                            if (i + c < shortArray.size) {
-                                sum += shortArray[i + c] / 32768.0f
-                            }
+        try {
+            while (true) {
+                if (!inputEnded) {
+                    val inputIndex = codec.dequeueInputBuffer(10_000)
+                    if (inputIndex >= 0) {
+                        val buffer = codec.getInputBuffer(inputIndex)!!
+                        val sampleSize = extractor.readSampleData(buffer, 0)
+                        if (sampleSize < 0) {
+                            codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputEnded = true
+                        } else {
+                            codec.queueInputBuffer(inputIndex, 0, sampleSize, extractor.sampleTime, 0)
+                            extractor.advance()
                         }
-                        rawSamples.add(sum / channelCount)
-                        i += channelCount
                     }
                 }
-                codec.releaseOutputBuffer(outIndex, false)
-                if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                    break
+                val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 10_000)
+                if (outputIndex >= 0) {
+                    val output = codec.getOutputBuffer(outputIndex)!!
+                    if (bufferInfo.size > 0) {
+                        output.position(bufferInfo.offset)
+                        output.limit(bufferInfo.offset + bufferInfo.size)
+                        val shorts = output.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                        val values = ShortArray(shorts.remaining())
+                        shorts.get(values)
+                        var offset = 0
+                        while (offset < values.size) {
+                            var sum = 0f
+                            for (channel in 0 until channelCount) {
+                                if (offset + channel < values.size) sum += values[offset + channel] / 32768f
+                            }
+                            rawSamples.add(sum / channelCount)
+                            offset += channelCount
+                        }
+                    }
+                    codec.releaseOutputBuffer(outputIndex, false)
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
+                } else if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    val outputFormat = codec.outputFormat
+                    sampleRate = outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    channelCount = outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
                 }
-            } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                val newFormat = codec.outputFormat
-                sampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                channelCount = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            }
+        } finally {
+            codec.stop()
+            codec.release()
+            extractor.release()
+        }
+        if (sampleRate == 16_000) return rawSamples.toFloatArray()
+        if (rawSamples.isEmpty()) return FloatArray(0)
+        val ratio = sampleRate.toDouble() / 16_000.0
+        val resampled = FloatArray((rawSamples.size / ratio).toInt())
+        for (index in resampled.indices) {
+            resampled[index] = rawSamples[(index * ratio).toInt().coerceIn(0, rawSamples.lastIndex)]
+        }
+        return resampled
+    }
+
+    private fun saveSrtToDownloads(content: String, lang: String, model: String): String {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val modelName = model.removePrefix("ggml-").removeSuffix(".bin")
+        val fileName = "Whisper_${modelName}_${lang}_$timestamp.srt"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, "application/x-subrip")
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            application.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)?.let { uri ->
+                application.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+            }
+        } else {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            File(downloadsDir, fileName).writeText(content, Charsets.UTF_8)
+        }
+        return fileName
+    }
+
+    override fun onCleared() {
+        runBlocking {
+            whisperContext?.release()
+            whisperContext = null
+        }
+    }
+
+    companion object {
+        fun factory() = viewModelFactory {
+            initializer {
+                val application = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as Application
+                MainScreenViewModel(application)
             }
         }
-
-        codec.stop()
-        codec.release()
-        extractor.release()
-
-        // 線性重採樣至 Whisper 要求的 16000Hz
-        if (sampleRate == 16000) {
-            return rawSamples.toFloatArray()
-        }
-        val ratio = sampleRate.toDouble() / 16000.0
-        val newLength = (rawSamples.size / ratio).toInt()
-        val resampled = FloatArray(newLength)
-        for (i in 0 until newLength) {
-            val srcIdx = (i * ratio).toInt().coerceIn(0, rawSamples.size - 1)
-            resampled[i] = rawSamples[srcIdx]
-        }
-return resampled
-}
-private fun saveSrtToDownloads(content: String, lang: String): String {
-val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-val fileName = "Whisper_${lang}_$timestamp.srt"
-if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-val values = ContentValues().apply {
-put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-put(MediaStore.Downloads.MIME_TYPE, "application/x-subrip")
-put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-}
-val uri = application.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-uri?.let {
-application.contentResolver.openOutputStream(it)?.use { out ->
-out.write(content.toByteArray(Charsets.UTF_8))
-}
-}
-} else {
-val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-val file = File(downloadsDir, fileName)
-file.writeText(content, Charsets.UTF_8)
-}
-return fileName
-}
-override fun onCleared() {
-runBlocking {
-whisperContext?.release()
-whisperContext = null
-}
-}
-companion object {
-fun factory() = viewModelFactory {
-initializer {
-val application = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as Application
-MainScreenViewModel(application)
-}
-}
-}
+    }
 }

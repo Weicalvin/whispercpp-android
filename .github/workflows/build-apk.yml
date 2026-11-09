@@ -1,4 +1,4 @@
-name: Build Whisper Translator APK
+name: Build Offline Traditional Chinese Subtitle APK
 
 on:
   push:
@@ -8,10 +8,12 @@ on:
 permissions:
   contents: read
 
+env:
+  WHISPER_COMMIT: e30c6799283225e1dcf574924b79cb49ebc2a209
+
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout 程式碼
         uses: actions/checkout@v4
@@ -20,7 +22,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '17'
-          distribution: 'temurin'
+          distribution: temurin
 
       - name: 設定 Android SDK
         uses: android-actions/setup-android@v4
@@ -29,7 +31,7 @@ jobs:
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
 
-      - name: 設定官方 Gradle 環境（解決缺少 wrapper 問題）
+      - name: 設定 Gradle 8.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.2'
@@ -37,24 +39,30 @@ jobs:
       - name: 取得相容的 whisper.cpp 原始碼
         run: |
           git clone --filter=blob:none https://github.com/ggml-org/whisper.cpp.git "$RUNNER_TEMP/whisper.cpp"
-          git -C "$RUNNER_TEMP/whisper.cpp" checkout e30c6799283225e1dcf574924b79cb49ebc2a209
+          git -C "$RUNNER_TEMP/whisper.cpp" checkout "$WHISPER_COMMIT"
 
-      - name: 下載 ggml-small-q5_1.bin 模型
+      - name: 下載可選的離線語音模型
         run: |
-          rm -rf app/src/main/assets/models/*
+          rm -rf app/src/main/assets/models
           mkdir -p app/src/main/assets/models
           curl --fail --location --retry 3 --retry-delay 5 \
-            'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin?download=true' \
-            --output app/src/main/assets/models/ggml-small-q5_1.bin
-          test "$(stat -c '%s' app/src/main/assets/models/ggml-small-q5_1.bin)" -gt 100000000
+            'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin?download=true' \
+            --output app/src/main/assets/models/ggml-tiny.bin
+          curl --fail --location --retry 3 --retry-delay 5 \
+            'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin?download=true' \
+            --output app/src/main/assets/models/ggml-base.bin
+          test "$(stat -c '%s' app/src/main/assets/models/ggml-tiny.bin)" -gt 50000000
+          test "$(stat -c '%s' app/src/main/assets/models/ggml-base.bin)" -gt 100000000
 
       - name: 編譯 Debug APK
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon -PWHISPER_CPP_DIR="$RUNNER_TEMP/whisper.cpp" assembleDebug
 
-      - name: 上傳打包好的 APK
+      - name: 上傳 APK 與 checksum
         uses: actions/upload-artifact@v4
         with:
-          name: Whisper-JaEn-ZhTW-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Whisper-ZhTW-Offline-APK
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/output-metadata.json
