@@ -1,4 +1,4 @@
-Cede package com.whispercppdemo.ui.main
+package com.whispercppdemo.ui.main
 
 import android.app.Application
 import android.content.ClipData
